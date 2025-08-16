@@ -34,6 +34,25 @@ A tool to help generate Python ctypes bindings from shared libraries. It reads D
 
 ## Usage
 
+Generate bindings for a shared library:
+
+```bash
+# Basic usage
+dwarfbind /usr/lib/libexample.so
+
+# Extract constants from headers
+dwarfbind --headers /usr/include/example.h /usr/lib/libexample.so
+
+# Add include paths for header processing
+dwarfbind -I /usr/include -I /usr/local/include --headers /usr/include/example.h /usr/lib/libexample.so
+
+# Specify output file
+dwarfbind -o bindings.py /usr/lib/libexample.so
+
+# Enable verbose output
+dwarfbind -v /usr/lib/libexample.so
+```
+
 The generated bindings provide a clean Python API:
 
 ```python
