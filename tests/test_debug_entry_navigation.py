@@ -3,7 +3,6 @@ Tests focused on DWARF entry navigation and auxiliary index behavior using mocks
 """
 
 from types import SimpleNamespace
-import pytest
 
 from dwarfbind.debug_info import (
     DebugFileInfo,
