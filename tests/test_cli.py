@@ -90,8 +90,7 @@ def test_run_generation_pipeline_pkgconfig(mock_pkgconfig, temp_dir):
 
     with patch('glob.glob', return_value=[lib_path]), \
          patch('dwarfbind.cli.load_library_and_debug_info') as mock_load, \
-         patch('dwarfbind.cli.collect_all_structures_and_typedefs') as mock_collect, \
-         patch('dwarfbind.cli.generate_python_module') as mock_gen:
+         patch('dwarfbind.cli.collect_all_structures_and_typedefs') as mock_collect:
 
         mock_load.return_value = (
             MagicMock(),  # debug_files
