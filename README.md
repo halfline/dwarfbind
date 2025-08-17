@@ -49,6 +49,9 @@ dwarfbind -I /usr/include -I /usr/local/include --headers /usr/include/example.h
 # Specify output file
 dwarfbind -o bindings.py /usr/lib/libexample.so
 
+# Process multiple libraries at once
+dwarfbind -o output/ libone.so libtwo.so
+
 # Enable verbose output
 dwarfbind -v /usr/lib/libexample.so
 ```
