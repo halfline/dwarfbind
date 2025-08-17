@@ -1,14 +1,10 @@
 """
-Tests for the generator module.
+Test binding generation functionality.
 """
 
-import os
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from dwarfbind.debug_info import (
-    DebugFileInfo,
-    DebugInfoFiles,
     StructMember,
     StructureDefinition,
     TypedefInfo,
