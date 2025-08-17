@@ -1,9 +1,8 @@
 """
-Tests for the preprocessor module.
+Test header file preprocessing functionality.
 """
 
-import pytest
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, MagicMock
 
 from dwarfbind.preprocessor import process_headers, parse_function_pointer_typedefs
 
