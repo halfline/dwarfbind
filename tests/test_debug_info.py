@@ -1,10 +1,8 @@
 """
-Tests for the debug_info module.
+Test debug info loading and parsing functionality.
 """
 
-import os
-import pytest
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock
 
 from dwarfbind.debug_info import (
     DebugFileInfo,

@@ -3,8 +3,7 @@ Tests for path handling utilities.
 """
 
 import os
-import pytest
-from unittest.mock import patch, mock_open, MagicMock
+from unittest.mock import patch, MagicMock
 
 from dwarfbind.paths import (
     generate_output_filename,

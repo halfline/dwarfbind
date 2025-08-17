@@ -5,7 +5,7 @@ Tests for the logging module.
 import logging
 import pytest
 from io import StringIO
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 from dwarfbind.logging import ColoredFormatter, setup_logging
 

@@ -7,7 +7,6 @@ consistent styling. It gracefully degrades when color support is not available.
 
 # Standard library imports
 import re
-import sys
 
 # Third-party imports
 try:

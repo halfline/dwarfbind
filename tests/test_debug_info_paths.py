@@ -79,8 +79,6 @@ def test_build_id_lookup_integration(monkeypatch, tmp_path, gcc_available):
     target.write_bytes(open(so, "rb").read())
 
     # Monkeypatch the search function to prefer our temp root
-    original = di.locate_debug_file_by_build_id
-
     def fake_locate_debug_file_by_build_id(build_id: str | None):
         # Mirror the logic but use our path
         if not build_id:

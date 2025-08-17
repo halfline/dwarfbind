@@ -1,8 +1,6 @@
 """Tests for pkg-config wrapper functionality."""
 
-import os
 import subprocess
-from pathlib import Path
 from textwrap import dedent
 from unittest.mock import patch
 
@@ -22,7 +20,6 @@ def test_verify_pkg_config_success(mock_run):
     """Test successful pkg-config verification."""
     mock_run.return_value.stdout = "0.29.2\n"
 
-    pkg_config = PkgConfig()
     # Should not raise any exceptions
 
 
