@@ -897,7 +897,6 @@ def extract_name_from_debug_info(
 
     # Get main and auxiliary debug files
     main_debug_info = debug_files.main_file.debug_info
-    main_debug_file = debug_files.main_file.debug_file
     auxiliary_debug_file = (
         debug_files.auxiliary_file.debug_file
         if debug_files.auxiliary_file
