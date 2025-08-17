@@ -3,7 +3,6 @@ Tests for usage example discovery across multiple compilation units.
 """
 
 from types import SimpleNamespace
-import pytest
 
 from dwarfbind.generator import find_usage_example
 from dwarfbind.debug_info import DebugFileInfo, DebugInfoFiles
