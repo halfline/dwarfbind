@@ -5,10 +5,9 @@ Tests for convert_dwarf_type_to_ctypes edge cases using mocked DIEs.
 from types import SimpleNamespace
 
 from dwarfbind.debug_info import (
-    DebugFileInfo,
     DebugInfoFiles,
+    DebugFileInfo,
     convert_dwarf_type_to_ctypes,
-    calculate_type_byte_size,
 )
 
 
