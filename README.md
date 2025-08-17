@@ -12,6 +12,7 @@ A tool to help generate Python ctypes bindings from shared libraries. It reads D
 - Provides clean imports like `from mylib.types import MyStruct`
 - Extracts constants and macros from header files
 - Automatically discovers library paths using pkg-config
+- Supports relative header paths (e.g., `freerdp/freerdp.h` with `-I /usr/include/freerdp3`)
 
 ## Requirements
 
@@ -47,10 +48,10 @@ Generate bindings for a shared library:
 dwarfbind /usr/lib/libexample.so
 
 # Extract constants from headers
-dwarfbind --headers /usr/include/example.h /usr/lib/libexample.so
+dwarfbind --headers example.h /usr/lib/libexample.so
 
 # Add include paths for header processing
-dwarfbind -I /usr/include -I /usr/local/include --headers /usr/include/example.h /usr/lib/libexample.so
+dwarfbind -I /usr/include -I /usr/local/include --headers example.h /usr/lib/libexample.so
 
 # Specify output file
 dwarfbind -o bindings.py /usr/lib/libexample.so
@@ -59,7 +60,7 @@ dwarfbind -o bindings.py /usr/lib/libexample.so
 dwarfbind -o output/ libone.so libtwo.so
 
 # Use pkg-config to find library and include paths
-dwarfbind --pkgconfig freerdp3 --headers /usr/include/freerdp3/freerdp.h
+dwarfbind --pkgconfig freerdp3 --headers freerdp/freerdp.h
 
 # Enable verbose output
 dwarfbind -v /usr/lib/libexample.so
