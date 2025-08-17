@@ -2,11 +2,7 @@
 Tests for output formatting utilities.
 """
 
-import re
-from io import StringIO
 from unittest.mock import patch
-
-import pytest
 
 from dwarfbind.output import (
     print_banner,
@@ -14,6 +10,7 @@ from dwarfbind.output import (
     print_file_info,
     print_success,
     print_stats,
+    ANSI_COLOR_PATTERN,
     _strip_ansi,
 )
 
@@ -84,14 +81,14 @@ def test_print_banner_without_color(capsys):
 def test_print_banner_with_ansi_text(capsys):
     """Test banner printing with text containing ANSI codes."""
     with patch("dwarfbind.output._has_colorama", True):
-        text = f"\x1b[1mBold\x1b[0m Text"
+        text = "\x1b[1mBold\x1b[0m Text"
         print_banner(text, use_color=True)
         captured = capsys.readouterr()
         output = captured.out
 
         # Box width should account for text length without ANSI codes
         text_len = len("Bold Text")
-        assert f"─" * (text_len + 2) in output
+        assert "─" * (text_len + 2) in output
 
         # Box should be properly aligned
         lines = output.strip().split("\n")
@@ -120,24 +117,6 @@ def test_print_banner_with_wide_text(capsys):
         assert clean_lines[0][0] == "╭" and clean_lines[0][-1] == "╮"
         assert clean_lines[1][0] == "│" and clean_lines[1][-1] == "│"
         assert clean_lines[2][0] == "╰" and clean_lines[2][-1] == "╯"
-
-
-"""
-Tests for the output module.
-"""
-
-import re
-import pytest
-from unittest.mock import patch
-
-from dwarfbind.output import (
-    print_banner,
-    print_section_header,
-    print_file_info,
-    print_success,
-    print_stats,
-    ANSI_COLOR_PATTERN,
-)
 
 
 def test_print_banner(capsys):
