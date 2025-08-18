@@ -15,6 +15,7 @@ and avoid naming conflicts:
 # Standard library imports
 import os
 import time
+import re
 
 # Third-party imports
 from colorama import Back, Fore, Style
@@ -1103,11 +1104,10 @@ def _highlight_python_snippet(line: str) -> str:
     Only foreground colors are used so the background can remain active.
     """
     # Keywords
-    import re as _re
 
     def color_keywords(text: str) -> str:
         # Python keywords + literals
-        pattern = _re.compile(
+        pattern = re.compile(
             r"\b(from|import|as|class|def|return|None|True|False)\b"
         )
         return pattern.sub(
@@ -1115,7 +1115,7 @@ def _highlight_python_snippet(line: str) -> str:
         )
 
     def color_builtin_types(text: str) -> str:
-        pattern = _re.compile(r"\b(POINTER|c_int|byref)\b")
+        pattern = re.compile(r"\b(POINTER|c_int|byref)\b")
         return pattern.sub(
             lambda m: f"{Fore.MAGENTA}{m.group(0)}{Fore.BLACK}", text
         )
