@@ -398,106 +398,75 @@ def collect_and_merge_structure_info(
     candidate_members = {}
 
     # Start with existing members (if any)
-    if is_union:
-        # In unions, members can have the same offset but different names
-        for member in structure_def.members:
-            key = (member.offset, member.name)
-            candidate_members[key] = {
-                "offset": member.offset,
-                "name": member.name,
-                "ctypes_expression": member.ctypes_expression,
-                "size_hint": None,
-                "description": member.description,
-                "quality": rank_ctypes_quality(member.ctypes_expression, None),
-            }
-    else:
-        # In structs, each offset should have only one member
-        for member in structure_def.members:
-            candidate_members[member.offset] = {
-                "offset": member.offset,
-                "name": member.name,
-                "ctypes_expression": member.ctypes_expression,
-                "size_hint": None,
-                "description": member.description,
-                "quality": rank_ctypes_quality(member.ctypes_expression, None),
-            }
+    for member in structure_def.members:
+        candidate_members[member.name] = {
+            "offset": member.offset,
+            "name": member.name,
+            "ctypes_expression": member.ctypes_expression,
+            "description": member.description,
+            "quality_score": rank_ctypes_quality(member.ctypes_expression, structure_size),
+        }
 
-    # Process all member entries in this DWARF entry
-    for child in entry.iter_children():
-        if child.tag != "DW_TAG_member":
+    # Process members from this entry
+    has_members = False
+    for member_entry in entry.iter_children():
+        if member_entry.tag != "DW_TAG_member":
             continue
 
+        has_members = True
         member_name = extract_name_from_debug_info(
-            child.attributes.get("DW_AT_name"), debug_files
+            member_entry.attributes.get("DW_AT_name"), debug_files
         )
         if not member_name or is_invalid_identifier(member_name):
             continue
 
-        member_offset = parse_struct_member_offset(child)
-        if member_offset is None:
+        # Get member offset
+        member_offset = parse_struct_member_offset(member_entry)
+        if member_offset is None and not is_union:
             continue
 
-        # Get type information for this member
-        member_type_entry = find_referenced_debug_entry(
-            child, "DW_AT_type", debug_files, auxiliary_index
+        # Convert member type to ctypes
+        member_type = find_referenced_debug_entry(
+            member_entry, "DW_AT_type", debug_files, auxiliary_index
         )
         type_info = convert_dwarf_type_to_ctypes(
-            member_type_entry, debug_files, auxiliary_index
-        )
-        quality_score = rank_ctypes_quality(
-            type_info.ctypes_expression, type_info.size_bytes
+            member_type, debug_files, auxiliary_index
         )
 
-        new_member_info = {
+        # For unions, all members start at offset 0
+        if is_union:
+            member_offset = 0
+
+        # Create or update member info
+        member_info = {
             "offset": member_offset,
             "name": member_name,
             "ctypes_expression": type_info.ctypes_expression,
-            "size_hint": type_info.size_bytes,
             "description": type_info.description,
-            "quality": quality_score,
+            "quality_score": rank_ctypes_quality(
+                type_info.ctypes_expression, type_info.size_bytes
+            ),
         }
 
-        if is_union:
-            # Union members: key by (offset, name) since multiple members can share offsets
-            member_key = (member_offset, member_name)
-            existing_member = candidate_members.get(member_key)
-            if (
-                existing_member is None
-                or quality_score > existing_member["quality"]
-            ):
-                candidate_members[member_key] = new_member_info
-            elif quality_score == existing_member["quality"] and len(
-                member_name
-            ) > len(existing_member["name"]):
-                # If quality is equal, prefer longer names (often more descriptive)
-                candidate_members[member_key] = new_member_info
-        else:
-            # Struct members: key by offset only
-            existing_member = candidate_members.get(member_offset)
-            if (
-                existing_member is None
-                or quality_score > existing_member["quality"]
-            ):
-                candidate_members[member_offset] = new_member_info
-            elif quality_score == existing_member["quality"] and len(
-                member_name
-            ) > len(existing_member["name"]):
-                # If quality is equal, prefer longer names (often more descriptive)
-                candidate_members[member_offset] = new_member_info
+        # Update if this is a better representation
+        existing_member = candidate_members.get(member_name)
+        if (
+            existing_member is None
+            or member_info["quality_score"] > existing_member["quality_score"]
+        ):
+            candidate_members[member_name] = member_info
 
-    # Convert best candidates back to StructMember objects
+    # If this is a struct with no members, create a byte array representation
+    if not has_members:
+        structure_def.members = []
+        return
+
+    # Sort members by offset and update the structure
+    sorted_members = sorted(
+        candidate_members.values(), key=lambda m: (m["offset"], m["name"])
+    )
+
     structure_def.members = []
-    if is_union:
-        # Sort union members by name for stable output
-        sorted_members = sorted(
-            candidate_members.values(), key=lambda m: m["name"]
-        )
-    else:
-        # Sort struct members by offset for proper layout
-        sorted_members = sorted(
-            candidate_members.values(), key=lambda m: m["offset"]
-        )
-
     for member_info in sorted_members:
         structure_def.members.append(
             StructMember(
