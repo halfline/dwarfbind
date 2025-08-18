@@ -3,7 +3,7 @@ dwarfbind - Generate Python ctypes bindings from shared
 libraries.
 """
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 from .logging import logger
 
