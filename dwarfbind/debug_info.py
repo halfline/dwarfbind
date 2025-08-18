@@ -998,8 +998,74 @@ def remove_type_qualifiers_and_typedefs(
     debug_files: DebugInfoFiles,
     auxiliary_index: dict[int, object],
 ) -> DIE | None:
-    """Follow typedef and qualifier chains to find the underlying type."""
-    # Implementation depends on specific needs
+    """
+    Follow type chain through qualifiers and typedefs to get to the underlying type.
+
+    This function recursively follows type references through:
+    - Type qualifiers (const, volatile)
+    - Typedefs
+    - Other type modifiers
+
+    It stops when it reaches:
+    - A basic type (int, float, etc)
+    - A structure/union/class definition
+    - A pointer type
+    - An array type
+
+    Args:
+        type_entry: The debug type entry to analyze
+        debug_files: Container for all debug file information
+        auxiliary_index: Index of auxiliary entries
+
+    Returns:
+        The underlying type DIE, or None if can't be resolved
+    """
+    if type_entry is None:
+        return None
+
+    # Keep track of visited types to avoid infinite recursion
+    visited = set()
+    current = type_entry
+
+    while current is not None:
+        # Get a unique identifier for this type entry
+        current_id = getattr(current, "offset", None)
+
+        # Check for cycles
+        if current_id in visited:
+            return None
+        visited.add(current_id)
+
+        # Stop at these types
+        if current.tag in {
+            "DW_TAG_base_type",
+            "DW_TAG_structure_type",
+            "DW_TAG_union_type",
+            "DW_TAG_class_type",
+            "DW_TAG_enumeration_type",
+            "DW_TAG_pointer_type",
+            "DW_TAG_array_type",
+        }:
+            return current
+
+        # Follow type chain for these
+        if current.tag in {
+            "DW_TAG_typedef",
+            "DW_TAG_const_type",
+            "DW_TAG_volatile_type",
+            "DW_TAG_restrict_type",
+            "DW_TAG_subroutine_type",
+            "DW_TAG_modified_type",
+        }:
+            # Get the underlying type
+            current = find_referenced_debug_entry(
+                current, "DW_AT_type", debug_files, auxiliary_index
+            )
+            continue
+
+        # Can't handle other types
+        return None
+
     return None
 
 
@@ -1041,21 +1107,12 @@ def convert_dwarf_type_to_ctypes(
         "DW_TAG_class_type",
         "DW_TAG_union_type",
     ):
-        struct_name = (
-            extract_name_from_debug_info(
-                peeled_type.attributes.get("DW_AT_name"), debug_files
-            )
-            or ""
+        struct_name = extract_name_from_debug_info(
+            peeled_type.attributes.get("DW_AT_name"), debug_files
         )
-        struct_size = calculate_type_byte_size(
-            peeled_type, debug_files, auxiliary_index
-        )
+        struct_size = calculate_type_byte_size(peeled_type, debug_files, auxiliary_index)
 
-        if (
-            struct_name
-            and not is_invalid_identifier(struct_name)
-            and struct_size
-        ):
+        if struct_name and not is_invalid_identifier(struct_name) and struct_size:
             base_name = create_safe_python_identifier(struct_name)
             # Use special marker for struct references that will be resolved later
             return TypeInfo(
@@ -1067,15 +1124,10 @@ def convert_dwarf_type_to_ctypes(
 
     # Handle the original type entry
     tag = type_entry.tag
-    type_name = (
-        extract_name_from_debug_info(
-            type_entry.attributes.get("DW_AT_name"), debug_files
-        )
-        or ""
-    )
-    type_size = calculate_type_byte_size(
-        type_entry, debug_files, auxiliary_index
-    )
+    type_name = extract_name_from_debug_info(
+        type_entry.attributes.get("DW_AT_name"), debug_files
+    ) or ""
+    type_size = calculate_type_byte_size(type_entry, debug_files, auxiliary_index)
     description = type_name or tag.replace("DW_TAG_", "")
 
     # Basic types (int, float, etc.)
