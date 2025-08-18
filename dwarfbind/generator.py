@@ -176,15 +176,276 @@ def generate_python_module(
         output_file.write(
             "    # Forward declarations for all structure types\n\n"
         )
-        output_file.write(
-            "    # Field definitions (ordered by dependencies)\n\n"
-        )
-
-        # Write structures
+        # First pass: Forward declarations for all structures
         for (c_name, size), struct_def in structures.items():
             python_name = create_safe_python_identifier(c_name)
             output_file.write(f"    class {python_name}(Structure):\n")
+            output_file.write(f'        """{c_name} - {size} bytes"""\n')
+            output_file.write(f"        BYTE_SIZE = {size}\n")
             output_file.write("        pass\n\n")
+
+        # Build dependency graph
+        dependencies = {}
+        referenced_structs = set()
+
+        # First pass: collect all referenced struct names
+        for (c_name1, size1), struct_def1 in structures.items():
+            python_name1 = create_safe_python_identifier(c_name1)
+            dependencies[python_name1] = set()
+            referenced_structs.add(python_name1)
+
+            # Look for struct references in member types
+            for member in struct_def1.members:
+                ctypes_expr = member.ctypes_expression
+                # Check both formats
+                if ctypes_expr.startswith("@STRUCTREF:"):
+                    struct_name = ctypes_expr.split(":")[1]
+                    referenced_structs.add(struct_name)
+                elif ctypes_expr.startswith("STRUCT::"):
+                    struct_name = ctypes_expr.split("::")[1].split(":")[0]
+                    referenced_structs.add(struct_name)
+                else:
+                    # Check for array types containing struct references
+                    array_match = re.match(r'\((.*?)\s*\*\s*(\d+)\)', ctypes_expr)
+                    if array_match:
+                        element_type = array_match.group(1).strip()
+                        if element_type.startswith("@STRUCTREF:"):
+                            struct_name = element_type.split(":")[1]
+                            referenced_structs.add(struct_name)
+                        elif element_type.startswith("STRUCT::"):
+                            struct_name = element_type.split("::")[1].split(":")[0]
+                            referenced_structs.add(struct_name)
+
+        # Initialize dependencies for all referenced structs
+        for struct_name in referenced_structs:
+            if struct_name not in dependencies:
+                dependencies[struct_name] = set()
+
+        # Second pass: build actual dependencies
+        for (c_name1, size1), struct_def1 in structures.items():
+            python_name1 = create_safe_python_identifier(c_name1)
+
+            # Look for struct references in member types
+            for member in struct_def1.members:
+                ctypes_expr = member.ctypes_expression
+                # Check both formats
+                if ctypes_expr.startswith("@STRUCTREF:"):
+                    struct_name = ctypes_expr.split(":")[1]
+                    struct_size = int(ctypes_expr.split(":")[2])
+                    for (c_name2, size2), _ in structures.items():
+                        python_name2 = create_safe_python_identifier(c_name2)
+                        if python_name2 == struct_name and size2 == struct_size and python_name2 != python_name1:
+                            logger.debug(f"Found dependency: {python_name2} -> {python_name1}")
+                            dependencies[python_name2].add(python_name1)
+                elif ctypes_expr.startswith("STRUCT::"):
+                    struct_name = ctypes_expr.split("::")[1].split(":")[0]
+                    struct_size = int(ctypes_expr.split(":")[-1])
+                    for (c_name2, size2), _ in structures.items():
+                        python_name2 = create_safe_python_identifier(c_name2)
+                        if python_name2 == struct_name and size2 == struct_size and python_name2 != python_name1:
+                            logger.debug(f"Found dependency: {python_name2} -> {python_name1}")
+                            dependencies[python_name2].add(python_name1)
+                else:
+                    # Check for array types containing struct references
+                    array_match = re.match(r'\((.*?)\s*\*\s*(\d+)\)', ctypes_expr)
+                    if array_match:
+                        element_type = array_match.group(1).strip()
+                        if element_type.startswith("@STRUCTREF:"):
+                            struct_name = element_type.split(":")[1]
+                            struct_size = int(element_type.split(":")[2])
+                            for (c_name2, size2), _ in structures.items():
+                                python_name2 = create_safe_python_identifier(c_name2)
+                                if python_name2 == struct_name and size2 == struct_size and python_name2 != python_name1:
+                                    logger.debug(f"Found array dependency: {python_name2} -> {python_name1}")
+                                    dependencies[python_name2].add(python_name1)
+                        elif element_type.startswith("STRUCT::"):
+                            struct_name = element_type.split("::")[1].split(":")[0]
+                            struct_size = int(element_type.split(":")[-1])
+                            for (c_name2, size2), _ in structures.items():
+                                python_name2 = create_safe_python_identifier(c_name2)
+                                if python_name2 == struct_name and size2 == struct_size and python_name2 != python_name1:
+                                    logger.debug(f"Found array dependency: {python_name2} -> {python_name1}")
+                                    dependencies[python_name2].add(python_name1)
+
+        # Topological sort
+        incoming_edges = {python_name: set() for python_name in dependencies}
+        for dependency, dependents in dependencies.items():
+            for dependent in dependents:
+                incoming_edges[dependent].add(dependency)
+
+        ready_queue = sorted([python_name for python_name, incoming in incoming_edges.items() if not incoming])
+        dependency_order = []
+
+        logger.debug("Starting topological sort")
+        logger.debug(f"Initial ready queue: {ready_queue}")
+
+        while ready_queue:
+            current_node = ready_queue.pop(0)
+            dependency_order.append(current_node)
+            logger.debug(f"Processing node: {current_node}")
+
+            for dependent in sorted(dependencies.get(current_node, [])):
+                incoming_edges[dependent].discard(current_node)
+                if not incoming_edges[dependent]:
+                    logger.debug(f"Adding to ready queue: {dependent}")
+                    ready_queue.append(dependent)
+
+        # Handle any remaining cycles (shouldn't happen with valid C code)
+        remaining_nodes = [python_name for (c_name, _), _ in structures.items()
+                         if (python_name := create_safe_python_identifier(c_name)) not in dependency_order]
+        if remaining_nodes:
+            logger.debug(f"Found cycles or unprocessed nodes: {remaining_nodes}")
+        dependency_order.extend(sorted(remaining_nodes))
+
+        logger.debug(f"Final dependency order: {dependency_order}")
+
+        # Second pass: Define fields in dependency order
+        output_file.write("\n    # Field definitions (ordered by dependencies)\n\n")
+        for python_name in dependency_order:
+            try:
+                # Find the corresponding struct definition
+                struct_def = None
+                c_name = None
+                size = None
+                for (c_name_temp, size_temp), struct_def_temp in structures.items():
+                    if create_safe_python_identifier(c_name_temp) == python_name:
+                        struct_def = struct_def_temp
+                        c_name = c_name_temp
+                        size = size_temp
+                        break
+
+                if not struct_def:
+                    logger.debug(f"No struct definition found for {python_name}")
+                    continue
+
+                logger.debug(f"Processing struct {python_name} ({c_name})")
+                last_field_end = 0
+                field_lines = []
+
+                # Process each member field
+                for member in struct_def.members:
+                    try:
+                        offset = member.offset
+                        member_name = member.name
+                        ctypes_expression = member.ctypes_expression
+                        description = member.description
+
+                        logger.debug(f"  Processing member {member_name}: {ctypes_expression}")
+
+                        # Add padding if there's a gap
+                        if offset > last_field_end:
+                            padding_size = offset - last_field_end
+                            field_lines.append(f'        ("_padding_{last_field_end}", (c_ubyte * {padding_size})),  # padding, offset {last_field_end}')
+                            last_field_end = offset
+
+                        # Handle struct references in the field type
+                        if ctypes_expression.startswith("@STRUCTREF:"):
+                            struct_name = ctypes_expression.split(":")[1]
+                            struct_size = int(ctypes_expression.split(":")[2])
+                            ctypes_expression = struct_name
+                            field_size = struct_size
+                            logger.debug(f"  Resolved @STRUCTREF to {struct_name}")
+                        elif ctypes_expression.startswith("STRUCT::"):
+                            struct_name = ctypes_expression.split("::")[1].split(":")[0]
+                            struct_size = int(ctypes_expression.split(":")[-1])
+                            ctypes_expression = struct_name
+                            field_size = struct_size
+                            logger.debug(f"  Resolved STRUCT:: to {struct_name}")
+                        else:
+                            # Try to estimate size for other types
+                            field_size = None
+                            array_match = re.match(r'\((.*?)\s*\*\s*(\d+)\)', ctypes_expression)
+                            if array_match:
+                                element_type = array_match.group(1).strip()
+                                count = int(array_match.group(2))
+                                logger.debug(f"  Processing array type: {element_type} * {count}")
+                                # Handle struct references in array element type
+                                if element_type.startswith("@STRUCTREF:"):
+                                    struct_name = element_type.split(":")[1]
+                                    struct_size = int(element_type.split(":")[2])
+                                    element_type = struct_name
+                                    field_size = struct_size * count
+                                    ctypes_expression = f"({struct_name} * {count})"
+                                    logger.debug(f"  Resolved array @STRUCTREF to {struct_name}")
+                                elif element_type.startswith("STRUCT::"):
+                                    struct_name = element_type.split("::")[1].split(":")[0]
+                                    struct_size = int(element_type.split(":")[-1])
+                                    element_type = struct_name
+                                    field_size = struct_size * count
+                                    ctypes_expression = f"({struct_name} * {count})"
+                                    logger.debug(f"  Resolved array STRUCT:: to {struct_name}")
+                                elif element_type == "c_ubyte":
+                                    field_size = count
+                                elif element_type == "c_char":
+                                    field_size = count
+                                elif element_type == "c_int":
+                                    field_size = count * 4
+                                elif element_type == "c_uint":
+                                    field_size = count * 4
+                                elif element_type == "c_uint16":
+                                    field_size = count * 2
+                                elif element_type == "c_uint32":
+                                    field_size = count * 4
+                                elif element_type == "c_uint64":
+                                    field_size = count * 8
+                            elif ctypes_expression == "c_void_p":
+                                field_size = 8
+                            elif ctypes_expression == "c_char":
+                                field_size = 1
+                            elif ctypes_expression == "c_ubyte":
+                                field_size = 1
+                            elif ctypes_expression == "c_int":
+                                field_size = 4
+                            elif ctypes_expression == "c_uint":
+                                field_size = 4
+                            elif ctypes_expression == "c_uint16":
+                                field_size = 2
+                            elif ctypes_expression == "c_uint32":
+                                field_size = 4
+                            elif ctypes_expression == "c_uint64":
+                                field_size = 8
+
+                        # Prevent self-reference problems
+                        if ctypes_expression == python_name:
+                            description = (description + " [self-by-value → c_void_p]") if description else "self-by-value → c_void_p"
+                            ctypes_expression = "c_void_p"
+                            field_size = 8
+                            logger.debug(f"  Converted self-reference to c_void_p")
+                        elif ctypes_expression.startswith("(") and ctypes_expression.endswith(")") and " * " in ctypes_expression:
+                            # Handle arrays of self
+                            inner_content = ctypes_expression[1:-1].strip()
+                            element_type, _, count_str = inner_content.partition("*")
+                            element_type = element_type.strip()
+                            count_str = count_str.strip()
+                            if element_type == python_name:
+                                description = (description + f" [array of self → c_void_p * {count_str}]") if description else f"array of self → c_void_p * {count_str}"
+                                ctypes_expression = f"(c_void_p * {count_str})"
+                                field_size = 8 * int(count_str)
+                                logger.debug(f"  Converted array of self to c_void_p array")
+
+                        field_lines.append(f'        ("{member_name}", {ctypes_expression}),  # {description}, offset {offset}')
+
+                        # Update position tracking
+                        if field_size is not None:
+                            last_field_end = max(last_field_end, offset + field_size)
+                    except Exception as e:
+                        logger.error(f"Error processing member {member_name} in struct {python_name}: {e}")
+                        raise
+
+                # Add tail padding if needed
+                if last_field_end < size:
+                    padding_size = size - last_field_end
+                    field_lines.append(f'        ("_tail_padding", (c_ubyte * {padding_size})),  # tail padding, offset {last_field_end}')
+
+                # Write the class definition with fields
+                output_file.write(f"    # Define fields for {python_name} ({c_name})\n")
+                output_file.write(f"    {python_name}._fields_ = [\n")
+                for field_line in field_lines:
+                    output_file.write(field_line + "\n")
+                output_file.write("    ]\n\n")
+            except Exception as e:
+                logger.error(f"Error processing struct {python_name}: {e}")
+                raise
 
         # Write typedefs
         output_file.write("    # Typedef aliases from C typedefs\n\n")
