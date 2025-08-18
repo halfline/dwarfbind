@@ -37,12 +37,15 @@ history that tells a clear story of progress.
 Assume the reader does not know the project well.
 - Write commit messages in the tense that reflects the state of the project **just before** the commit is applied.
 - Format:
-  - **First line**: a concise summary with a short prefix (`project:`, `cli:`, `debuginfo:`, etc.).
+  - **First line**: a concise summary of the change being made with a short prefix (`project:`, `cli:`, `debuginfo:`, etc.).
   - **First paragraph**: summarize the code being changed (not the change itself).
   - **Second paragraph**: explain the problem with the existing state of affairs.
   - **Third paragraph**: describe how the problem is solved by the commit. Use natural prose such as “This commit addresses that by …”.
   - **Optional final paragraph**: note any future plans that will build on this change.
-- Try to use natural language in commit messages. It follow the above structure, but should not demarcate that structure.
+- Try to use natural language in commit messages. Messags should follow the above structure, but should not demarcate that structure.
+- The summary line should be around 60 characters long
+- All other paragraphs should wrap at 68 characters
+- Reserve the demonstrative determiner "this" for the commit itself. Use "that" or other options to refer to anything else.
 
 ---
 
