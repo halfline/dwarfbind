@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import textwrap
 import pytest
+from ctypes import byref
 
 from dwarfbind.debug_info import (
     load_library_and_debug_info,
@@ -16,6 +17,7 @@ from dwarfbind.preprocessor import (
     process_headers,
     parse_function_pointer_typedefs,
 )
+from dwarfbind.generator import generate_python_module
 
 
 @pytest.fixture
@@ -115,6 +117,58 @@ def test_unstripped_library_dwarf(tmp_path, toolchain_available):
     assert any(c_name == "MyStruct" for (c_name, _size) in structures.keys())
     # Our typedef should be present (best-effort depending on toolchain)
     assert "Counter" in typedefs
+
+
+def test_end_to_end_call_with_generated_bindings(tmp_path, toolchain_available):
+    so_path = _compile_shared(tmp_path)
+
+    # Load debug info to discover types, typedefs, and signatures
+    debug_files, library_name, debug_path, build_id, exported_functions = load_library_and_debug_info(
+        so_path
+    )
+    structures, typedefs = collect_all_structures_and_typedefs(
+        debug_files, skip_progress=True
+    )
+
+    # Build signatures using the new collector
+    from dwarfbind.debug_info import collect_exported_function_signatures
+    signatures = collect_exported_function_signatures(
+        debug_files, structures, exported_functions
+    )
+
+    # Generate a module file
+    out_py = tmp_path / "libtest_bindings.py"
+    generate_python_module(
+        str(out_py),
+        library_name,
+        so_path,
+        build_id,
+        structures,
+        typedefs,
+        exported_functions,
+        signatures,
+        macros=None,
+    )
+
+    # Add temp dir to sys.path and import the generated module dynamically
+    import importlib.util, sys
+    sys.path.insert(0, str(tmp_path))
+    try:
+        spec = importlib.util.spec_from_file_location("libtest_bindings", str(out_py))
+        mod = importlib.util.module_from_spec(spec)
+        assert spec.loader is not None
+        spec.loader.exec_module(mod)
+
+        # Create a struct instance and call add_numbers via symbols. Prototypes should be set.
+        S = mod.types.MyStruct
+        s = S()
+        s.value = 5
+        s.small = 7
+        res = mod.symbols.add_numbers(byref(s), 4)
+        # 5 + 4 == 9
+        assert res == 9
+    finally:
+        sys.path.pop(0)
 
 
 @pytest.mark.skipif(shutil.which("eu-strip") is None, reason="eu-strip not available")

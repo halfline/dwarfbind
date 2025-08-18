@@ -39,10 +39,12 @@ from .output import ANSI_COLOR_PATTERN, _has_colorama, print_stats
 def generate_python_module(
     output_path: str,
     library_name: str,
+    original_library_path: str | None,
     build_id: str | None,
     structures: dict[tuple[str, int], StructureDefinition],
     typedefs: dict[str, TypedefInfo],
     exported_functions: list[str],
+    function_signatures: dict[str, dict],
     macros: dict[str, str] | None = None,
 ) -> None:
     """
@@ -85,7 +87,7 @@ def generate_python_module(
         output_file.write("#   SONAME:      " + library_name + "\n")
         if build_id:
             output_file.write("#   Build ID:    " + build_id + "\n")
-        source_path = os.path.realpath(library_name)
+        source_path = os.path.realpath(original_library_path or library_name)
         output_file.write("#   Source File: " + source_path + "\n")
         output_file.write(
             "#   Generated:   " + time.strftime("%Y-%m-%d %H:%M:%S %Z") + "\n"
@@ -499,14 +501,25 @@ def generate_python_module(
                 output_file.write(f"        BYTE_SIZE = {byte_size}\n")
             output_file.write("        pass\n\n")
 
-        # Write exported symbols
+        # Write exported symbols with signatures
         output_file.write(
-            "# Exported function names discovered from ELF analysis\n"
+            "# Exported functions with ctypes signatures discovered from DWARF\n"
         )
-        output_file.write("EXPORT_SYMBOLS = [\n")
+        output_file.write("EXPORT_SYMBOLS = {\n")
         for name in exported_functions:
-            output_file.write(f"    {repr(name)},\n")
-        output_file.write("]\n\n")
+            spec = function_signatures.get(name)
+            if spec is None:
+                # If no signature, keep empty spec for discovery and dir()
+                output_file.write(f"    {repr(name)}: {{'restype': None, 'argtypes': []}},\n")
+            else:
+                restype_repr = repr(spec.get('restype', None))
+                argtypes_list = spec.get('argtypes', []) or []
+                # Ensure string elements for repr
+                argtypes_repr = "[" + ", ".join(repr(s) for s in argtypes_list) + "]"
+                output_file.write(
+                    f"    {repr(name)}: {{'restype': {restype_repr}, 'argtypes': {argtypes_repr}}},\n"
+                )
+        output_file.write("}\n\n")
 
         # Write constants if available
         if macros:
@@ -530,13 +543,22 @@ def generate_python_module(
             f"_symbols_module = _types_module.ModuleType('{module_name}.symbols')\n\n"
         )
         output_file.write("def _symbols___getattr__(name):\n")
-        output_file.write(
-            "    # Forward attribute access to the underlying CDLL\n"
-        )
-        output_file.write("    return getattr(symbols, name)\n\n")
+        output_file.write("    func = getattr(symbols, name)\n")
+        output_file.write("    spec = EXPORT_SYMBOLS.get(name)\n")
+        output_file.write("    if spec is not None:\n")
+        output_file.write("        # Configure ctypes restype and argtypes based on DWARF-derived signatures\n")
+        output_file.write("        try:\n")
+        output_file.write("            restype_expr = spec.get('restype')\n")
+        output_file.write("            func.restype = eval(restype_expr, globals(), locals()) if restype_expr is not None else None\n")
+        output_file.write("            arg_exprs = spec.get('argtypes') or []\n")
+        output_file.write("            func.argtypes = [eval(e, globals(), locals()) for e in arg_exprs]\n")
+        output_file.write("        except Exception:\n")
+        output_file.write("            # Leave defaults if evaluation fails\n")
+        output_file.write("            pass\n")
+        output_file.write("    return func\n\n")
         output_file.write("def _symbols___dir__():\n")
         output_file.write("    # Present only exported names we baked in\n")
-        output_file.write("    return sorted(EXPORT_SYMBOLS)\n\n")
+        output_file.write("    return sorted(EXPORT_SYMBOLS.keys())\n\n")
         output_file.write(
             "_symbols_module.__getattr__ = _symbols___getattr__\n"
         )

@@ -43,10 +43,12 @@ def test_generate_python_module(temp_file):
     generate_python_module(
         temp_file,
         "libtest.so",
+        "/abs/path/libtest.so",
         "test-build-id",
         structures,
         typedefs,
         exported_functions,
+        {},
         macros
     )
 
@@ -58,7 +60,7 @@ def test_generate_python_module(temp_file):
         assert "class types:" in content
         assert "class TestStruct(Structure):" in content
         assert "class TestTypedef(c_void_p):" in content
-        assert "EXPORT_SYMBOLS = [" in content
+        assert "EXPORT_SYMBOLS = {" in content
         assert "'test_function'" in content
         assert "TEST_MACRO = 42" in content
 

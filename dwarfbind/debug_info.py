@@ -45,6 +45,7 @@ __all__ = [
     "MAX_FUNCTION_NAME_LENGTH",
     "find_referenced_debug_entry",
     "build_auxiliary_debug_entry_index",
+    "collect_exported_function_signatures",
 ]
 
 # Constants
@@ -1612,3 +1613,153 @@ def build_structure_name_mapping(
         name_mapping[(c_structure_name, size)] = final_python_name
 
     return name_mapping
+
+
+def _dwarf_type_to_signature_expr(
+    type_entry: DIE,
+    debug_files: DebugInfoFiles,
+    auxiliary_index: dict[int, object],
+    struct_name_mapping: dict[tuple[str, int], str],
+) -> str | None:
+    """
+    Convert a DWARF type (for function return/parameter) into a Python expression
+    string suitable for eval() inside the generated module, using names from the
+    `types` submodule when referring to structs/unions.
+    """
+    if type_entry is None:
+        return None
+
+    # Follow qualifiers/typedefs for underlying decisions
+    peeled = remove_type_qualifiers_and_typedefs(type_entry, debug_files, auxiliary_index)
+
+    # Handle pointers specially for API friendliness (e.g., char* -> c_char_p, struct* -> POINTER(types.Struct))
+    if getattr(type_entry, "tag", None) == "DW_TAG_pointer_type":
+        pointed = find_referenced_debug_entry(type_entry, "DW_AT_type", debug_files, auxiliary_index)
+        peeled_pointed = remove_type_qualifiers_and_typedefs(pointed, debug_files, auxiliary_index) if pointed else None
+
+        if peeled_pointed is None:
+            return "c_void_p"
+
+        if peeled_pointed.tag == "DW_TAG_base_type":
+            base_name = extract_name_from_debug_info(peeled_pointed.attributes.get("DW_AT_name"), debug_files) or ""
+            # Treat any char* as c_char_p (common C string convention)
+            if base_name in ("char", "signed char"):
+                return "c_char_p"
+            # Other basic types -> POINTER(<ctype>)
+            mapped = convert_dwarf_type_to_ctypes(peeled_pointed, debug_files, auxiliary_index)
+            return f"POINTER({mapped.ctypes_expression})" if mapped.ctypes_expression else "c_void_p"
+
+        if peeled_pointed.tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+            struct_name = extract_name_from_debug_info(peeled_pointed.attributes.get("DW_AT_name"), debug_files)
+            struct_size = calculate_type_byte_size(peeled_pointed, debug_files, auxiliary_index)
+            if struct_name and struct_size:
+                py_name = struct_name_mapping.get((struct_name, struct_size))
+                if py_name:
+                    return f"POINTER(types.{py_name})"
+            return "c_void_p"
+
+        # Pointer to void or unknown → c_void_p
+        return "c_void_p"
+
+    # Non-pointer cases
+    if peeled is not None and peeled.tag in ("DW_TAG_structure_type", "DW_TAG_class_type", "DW_TAG_union_type"):
+        struct_name = extract_name_from_debug_info(peeled.attributes.get("DW_AT_name"), debug_files)
+        struct_size = calculate_type_byte_size(peeled, debug_files, auxiliary_index)
+        if struct_name and struct_size:
+            py_name = struct_name_mapping.get((struct_name, struct_size))
+            if py_name:
+                return f"types.{py_name}"
+
+    # Fallback to general conversion
+    info = convert_dwarf_type_to_ctypes(type_entry, debug_files, auxiliary_index)
+    expr = info.ctypes_expression
+    if expr.startswith("@STRUCTREF:"):
+        # @STRUCTREF:Name:Size -> types.Name
+        _, base, size_str = expr.split(":")
+        # Try to resolve with mapping (size included in final class name if needed)
+        for (c_name, size), py_name in struct_name_mapping.items():
+            if create_safe_python_identifier(c_name) == base and str(int(size)) == size_str:
+                return f"types.{py_name}"
+        return f"types.{base}"
+    if expr.startswith("STRUCT::"):
+        # STRUCT::Name:Size
+        base = expr.split("::")[1].split(":")[0]
+        return f"types.{base}"
+    return expr
+
+
+def collect_exported_function_signatures(
+    debug_files: DebugInfoFiles,
+    structures: dict[tuple[str, int], StructureDefinition],
+    exported_function_names: list[str],
+) -> dict[str, dict]:
+    """
+    Collect ctypes signatures for exported functions using DWARF information.
+
+    For each DW_TAG_subprogram, extract return type and formal parameters, and
+    prefer definitions (entries with code range) over declarations.
+
+    Returns a dict: { name: { 'restype': <expr-or-None>, 'argtypes': [expr, ...] } }
+    where expressions are strings that can be eval()'d in the generated module.
+    """
+    if not exported_function_names:
+        return {}
+
+    # Fast check set
+    exported_set = set(exported_function_names)
+
+    # Build helper indices
+    struct_name_mapping = build_structure_name_mapping(structures)
+    auxiliary_index = build_auxiliary_debug_entry_index(debug_files)
+
+    signatures: dict[str, tuple[bool, dict]] = {}
+
+    for debug_file_info in debug_files:
+        dwarf_info = getattr(debug_file_info, "debug_info", None)
+        if dwarf_info is None:
+            continue
+        for compilation_unit in dwarf_info.iter_CUs():
+            for entry in compilation_unit.iter_DIEs():
+                if entry.tag != "DW_TAG_subprogram":
+                    continue
+
+                func_name = extract_name_from_debug_info(entry.attributes.get("DW_AT_name"), debug_files)
+                if not func_name or func_name not in exported_set:
+                    continue
+
+                # Detect definition vs declaration
+                has_code = any(
+                    attr in entry.attributes for attr in ("DW_AT_low_pc", "DW_AT_high_pc", "DW_AT_ranges")
+                )
+
+                # Extract return type
+                return_attr = entry.attributes.get("DW_AT_type")
+                if return_attr is not None:
+                    return_type_entry = find_referenced_debug_entry(entry, "DW_AT_type", debug_files, auxiliary_index)
+                    restype_expr = _dwarf_type_to_signature_expr(return_type_entry, debug_files, auxiliary_index, struct_name_mapping)
+                    # Treat 'void' return as None
+                    if (
+                        return_type_entry is not None
+                        and getattr(return_type_entry, "tag", None) == "DW_TAG_base_type"
+                        and (extract_name_from_debug_info(return_type_entry.attributes.get("DW_AT_name"), debug_files) or "").lower() == "void"
+                    ):
+                        restype_expr = None
+                else:
+                    restype_expr = None
+
+                # Extract ordered formal parameters
+                arg_exprs: list[str] = []
+                for child in entry.iter_children():
+                    if child.tag != "DW_TAG_formal_parameter":
+                        continue
+                    param_type_entry = find_referenced_debug_entry(child, "DW_AT_type", debug_files, auxiliary_index)
+                    expr = _dwarf_type_to_signature_expr(param_type_entry, debug_files, auxiliary_index, struct_name_mapping)
+                    # For safety, default unresolved to c_void_p
+                    arg_exprs.append(expr or "c_void_p")
+
+                current = signatures.get(func_name)
+                if current is None or (has_code and not current[0]):
+                    signatures[func_name] = (has_code, {"restype": restype_expr, "argtypes": arg_exprs})
+
+    # Strip the definition flag, return plain mapping
+    return {name: spec for name, (flag, spec) in signatures.items()}

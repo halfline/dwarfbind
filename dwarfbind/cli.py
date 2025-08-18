@@ -13,6 +13,7 @@ from .debug_info import (
     TypedefInfo,
     collect_all_structures_and_typedefs,
     load_library_and_debug_info,
+    collect_exported_function_signatures,
 )
 from .generator import (
     generate_python_module,
@@ -284,6 +285,10 @@ def run_generation_pipeline(args: argparse.Namespace) -> None:
         all_structures, all_typedefs = collect_all_structures_and_typedefs(
             debug_files, skip_progress=args.skip_progress
         )
+        # Collect function signatures for exported functions
+        function_signatures = collect_exported_function_signatures(
+            debug_files, all_structures, exported_functions
+        )
 
         # Filter/augment typedefs
         if args.skip_typedefs:
@@ -350,26 +355,25 @@ def run_generation_pipeline(args: argparse.Namespace) -> None:
                 library_name, library_path
             )
 
-        print()
-        print_section_header("Generating Python Module", use_color=use_color)
-        logger.info(f"Generating {output_filename}...")
-        generate_python_module(
-            output_filename,
-            library_name,
-            build_id,
-            all_structures,
-            all_typedefs,
-            exported_functions,
-            macros_from_headers,
-        )
-
-        # Strip any trailing whitespace in the generated file
-        strip_trailing_whitespace_from_file(output_filename)
-
-        # Success summary
-        print_success(
-            f"Successfully generated {output_filename}", use_color=use_color
-        )
+        # Generate module
+        try:
+            print_section_header("Generating Python Module", use_color=use_color)
+            generate_python_module(
+                output_filename,
+                library_name,
+                library_path,
+                build_id,
+                all_structures,
+                all_typedefs,
+                exported_functions,
+                function_signatures,
+                macros_from_headers,
+            )
+            strip_trailing_whitespace_from_file(output_filename)
+            print_success(f"Generated: {output_filename}")
+        except Exception as e:
+            logger.error(f"Failed to generate module: {e}")
+            sys.exit(1)
 
         # Print usage example with discovered real function and struct names
         print_usage_example(
