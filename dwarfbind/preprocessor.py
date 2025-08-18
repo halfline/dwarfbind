@@ -9,7 +9,7 @@ import subprocess
 
 # Local imports
 from .logging import logger
-from .paths import resolve_header_path
+from .paths import resolve_header_or_directory_path
 
 
 def process_headers(
@@ -199,12 +199,19 @@ def process_headers(
             macros[name] = value
 
     # Process each header file
-    for header in header_files:
+    resolved_headers = []
+    for header_or_directory in header_files:
         try:
             # Resolve header path using include paths
-            resolved_header = resolve_header_path(header, include_paths)
-            logger.debug(f"Resolved header path: {resolved_header}")
+            resolved_paths = resolve_header_or_directory_path(header_or_directory, include_paths)
+            resolved_headers.extend(resolved_paths)
+            logger.debug(f"Resolved paths from {header_or_directory}: {resolved_paths}")
+        except Exception as e:
+            logger.warning(f"Error resolving {header_or_directory}: {e}")
 
+    # Process each resolved header
+    for resolved_header in resolved_headers:
+        try:
             cmd = cpp_cmd + [resolved_header]
             result = subprocess.run(
                 cmd, check=False, capture_output=True, text=True
@@ -238,7 +245,7 @@ def process_headers(
             except Exception:
                 pass
         except Exception as e:
-            logger.warning(f"Error processing {header}: {e}")
+            logger.warning(f"Error processing {resolved_header}: {e}")
 
     return macros
 
@@ -261,10 +268,18 @@ def parse_function_pointer_typedefs(header_files: list[str]) -> set[str]:
         r"typedef\s+[^;\n]*\(\s*[^)]*\*\s*([A-Za-z_][A-Za-z0-9_]*)\s*\)\s*\([^;]*\)\s*;"
     )
 
+    # Resolve each header path (may expand to multiple files if directories)
+    resolved_headers = []
     for path in header_files:
         try:
-            # Resolve header path using include paths
-            resolved_path = resolve_header_path(path)
+            resolved_paths = resolve_header_or_directory_path(path)
+            resolved_headers.extend(resolved_paths)
+        except Exception as e:
+            logger.debug(f"Failed to resolve header path {path}: {e}")
+
+    # Process each resolved header
+    for resolved_path in resolved_headers:
+        try:
             with open(resolved_path, encoding="utf-8", errors="ignore") as fh:
                 text = fh.read()
                 for match in pattern.finditer(text):
@@ -272,6 +287,6 @@ def parse_function_pointer_typedefs(header_files: list[str]) -> set[str]:
                     if name and name.isidentifier():
                         fn_typedef_names.add(name)
         except Exception as e:
-            logger.debug(f"Failed to read header {path}: {e}")
+            logger.debug(f"Failed to read header {resolved_path}: {e}")
 
     return fn_typedef_names

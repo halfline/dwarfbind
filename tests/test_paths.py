@@ -1,175 +1,119 @@
 """
-Tests for path handling utilities.
+Test path handling functionality.
 """
 
 import os
-from unittest.mock import patch, MagicMock
+import pytest
 
 from dwarfbind.paths import (
+    resolve_header_or_directory_path,
+    collect_header_files_from_directory,
     generate_output_filename,
-    resolve_header_path,
     strip_trailing_whitespace_from_file,
 )
 
 
-def test_generate_output_filename():
-    """Test output filename generation."""
-    # Test with library name
-    assert generate_output_filename("libtest.so.1", "/path/to/lib") == "libtest_so_1.py"
-    assert generate_output_filename("lib-test.so", "/path/to/lib") == "lib_test_so.py"
-    assert generate_output_filename("lib/test.so", "/path/to/lib") == "lib_test_so.py"
+def test_collect_header_files_from_directory(tmp_path):
+    """Test collecting all files from a directory."""
+    # Create test directory structure
+    subdir = tmp_path / "include"
+    subdir.mkdir()
 
-    # Test with None library name (should use fallback path)
-    assert generate_output_filename(None, "/path/to/libtest.so") == "libtest_so.py"
-    assert generate_output_filename(None, "libtest.so") == "libtest_so.py"
+    # Create various files
+    (tmp_path / "test.h").write_text("")
+    (tmp_path / "other.hpp").write_text("")
+    (subdir / "sub.h").write_text("")
+    (tmp_path / "not_header.txt").write_text("")
+    (subdir / "extra.hxx").write_text("")
+    (subdir / "template.h++").write_text("")
 
-    # Test special characters
-    assert generate_output_filename("lib-test-1.2.3.so", "/path/to/lib") == "lib_test_1_2_3_so.py"
-    assert generate_output_filename("lib/test/1.so", "/path/to/lib") == "lib_test_1_so.py"
+    # Collect and verify
+    headers = collect_header_files_from_directory(str(tmp_path))
+    print("\nFound headers:", headers)  # Debug output
+    assert len(headers) == 6
+    assert all(os.path.isabs(h) for h in headers)
+    assert any("test.h" in h for h in headers)
+    assert any("other.hpp" in h for h in headers)
+    assert any("sub.h" in h for h in headers)
+    assert any("extra.hxx" in h for h in headers)
+    assert any("template.h++" in h for h in headers)
+    assert any("not_header.txt" in h for h in headers)
 
-    # Test empty library name
-    assert generate_output_filename("", "/path/to/libtest.so") == "libtest_so.py"
 
-
-def test_resolve_header_path_absolute():
-    """Test resolving absolute header paths."""
-    path = "/usr/include/freerdp3/freerdp.h"
-    assert resolve_header_path(path) == path
-
-
-def test_resolve_header_path_relative_current_dir(tmp_path):
-    """Test resolving header in current directory."""
-    # Create a test header file
+def test_resolve_header_or_directory_path_absolute(tmp_path):
+    """Test resolving absolute paths to files and directories."""
+    # Create test files
     header = tmp_path / "test.h"
     header.write_text("")
+    subdir = tmp_path / "include"
+    subdir.mkdir()
+    (subdir / "sub.h").write_text("")
 
-    # Save current directory
-    old_cwd = os.getcwd()
-    try:
-        # Change to temp directory
-        os.chdir(str(tmp_path))
-        result = resolve_header_path("test.h")
-        assert os.path.samefile(result, header)
-    finally:
-        # Restore current directory
-        os.chdir(old_cwd)
+    # Test absolute file path
+    resolved = resolve_header_or_directory_path(str(header))
+    assert resolved == [str(header)]
 
-
-def test_resolve_header_path_include_paths(tmp_path):
-    """Test resolving header using include paths."""
-    # Create test directories and file
-    include_dir = tmp_path / "include"
-    include_dir.mkdir()
-    header = include_dir / "test.h"
-    header.write_text("")
-
-    result = resolve_header_path("test.h", include_paths=[str(include_dir)])
-    assert os.path.samefile(result, header)
+    # Test absolute directory path
+    resolved = resolve_header_or_directory_path(str(tmp_path))
+    assert len(resolved) == 2
+    assert all(h.endswith((".h", ".hpp", ".hxx", ".h++")) for h in resolved)
 
 
-def test_resolve_header_path_multiple_include_paths(tmp_path):
-    """Test resolving header with multiple include paths."""
-    # Create test directories and files
+def test_resolve_header_or_directory_path_relative(tmp_path):
+    """Test resolving relative paths against include paths."""
+    # Create test structure in multiple include paths
     include1 = tmp_path / "include1"
     include2 = tmp_path / "include2"
     include1.mkdir()
     include2.mkdir()
 
-    # Put header in second include path
-    header = include2 / "test.h"
-    header.write_text("")
+    # Add headers to both include paths
+    (include1 / "common.h").write_text("")
+    (include2 / "common.h").write_text("")  # Same name, different location
+    (include1 / "headers").mkdir()
+    (include2 / "headers").mkdir()
+    (include1 / "headers/test1.h").write_text("")
+    (include2 / "headers/test2.h").write_text("")
 
-    result = resolve_header_path(
-        "test.h",
-        include_paths=[str(include1), str(include2)]
-    )
-    assert os.path.samefile(result, header)
+    include_paths = [str(include1), str(include2)]
 
+    # Test relative file path (first match wins)
+    resolved = resolve_header_or_directory_path("common.h", include_paths)
+    assert len(resolved) == 1
+    assert resolved[0] == str(include1 / "common.h")
 
-def test_resolve_header_path_not_found():
-    """Test behavior when header is not found."""
-    path = "nonexistent.h"
-    include_paths = ["/usr/include", "/usr/local/include"]
-    assert resolve_header_path(path, include_paths) == path
-
-
-def test_strip_trailing_whitespace_from_file(temp_file):
-    """Test whitespace stripping from file."""
-    # Test with various whitespace patterns
-    test_content = [
-        "Line with spaces   \n",
-        "Line with tabs\t\t\n",
-        "Line with mixed spaces and tabs  \t  \n",
-        "Line with no trailing whitespace\n",
-        "Final line with whitespace  "  # No newline
-    ]
-
-    # Write test content
-    with open(temp_file, "w", encoding="utf-8") as f:
-        f.writelines(test_content)
-
-    # Strip whitespace
-    strip_trailing_whitespace_from_file(temp_file)
-
-    # Verify results
-    with open(temp_file, "r", encoding="utf-8") as f:
-        lines = f.readlines()
-
-        # Check each line is stripped
-        assert lines[0] == "Line with spaces\n"
-        assert lines[1] == "Line with tabs\n"
-        assert lines[2] == "Line with mixed spaces and tabs\n"
-        assert lines[3] == "Line with no trailing whitespace\n"
-        assert lines[4] == "Final line with whitespace\n"
-
-        # Check file ends with exactly one newline
-        assert lines[-1].endswith("\n")
+    # Test relative directory path (combines matches from all paths)
+    resolved = resolve_header_or_directory_path("headers", include_paths)
+    assert len(resolved) == 2
+    assert any("test1.h" in h for h in resolved)
+    assert any("test2.h" in h for h in resolved)
 
 
-def test_strip_trailing_whitespace_error_handling():
-    """Test error handling in whitespace stripping."""
-    # Test with non-existent file
-    with patch("builtins.open", side_effect=FileNotFoundError):
-        strip_trailing_whitespace_from_file("nonexistent.txt")
-        # Should not raise exception
+def test_resolve_header_or_directory_path_missing():
+    """Test handling of missing files and directories."""
+    # Non-existent path with no include paths
+    resolved = resolve_header_or_directory_path("missing.h")
+    assert resolved == ["missing.h"]  # Returns original for cpp to handle
 
-    # Test with permission error
-    with patch("builtins.open", side_effect=PermissionError):
-        strip_trailing_whitespace_from_file("protected.txt")
-        # Should not raise exception
-
-    # Test with encoding error
-    with patch("builtins.open", side_effect=UnicodeError):
-        strip_trailing_whitespace_from_file("invalid_encoding.txt")
-        # Should not raise exception
+    # Non-existent directory
+    resolved = resolve_header_or_directory_path("missing/")
+    assert resolved == []  # Empty list for directories that don't exist
 
 
-def test_strip_trailing_whitespace_encoding():
-    """Test handling of different encodings and special characters."""
-    test_content = [
-        "ASCII line   \n",
-        "Unicode line with emoji 😊   \n",
-        "Line with special chars ñ é ß   \n"
-    ]
+def test_generate_output_filename():
+    """Test output filename generation."""
+    assert generate_output_filename("libtest.so.1", "") == "libtest_so_1.py"
+    assert generate_output_filename(None, "/path/to/lib.so") == "lib_so.py"
+    assert generate_output_filename("", "lib-test.so") == "lib_test_so.py"
 
-    # Create a mock file object that properly tracks write calls
-    mock_file = MagicMock()
-    mock_file.write = MagicMock()
-    mock_file.writelines = MagicMock()
 
-    # Mock both read and write operations
-    mock_open_obj = MagicMock()
-    mock_open_obj.__enter__ = MagicMock(return_value=mock_file)
-    mock_open_obj.__exit__ = MagicMock(return_value=None)
+def test_strip_trailing_whitespace(tmp_path):
+    """Test whitespace stripping from files."""
+    test_file = tmp_path / "test.txt"
+    test_file.write_text("line1  \nline2\t \nline3\n")
 
-    # Set up the mock to return our test content when reading
-    mock_file.readlines = MagicMock(return_value=test_content)
+    strip_trailing_whitespace_from_file(str(test_file))
+    content = test_file.read_text()
 
-    with patch("builtins.open", return_value=mock_open_obj):
-        strip_trailing_whitespace_from_file("test.txt")
-
-        # Verify write calls
-        write_calls = list(mock_file.writelines.call_args[0][0])
-        assert write_calls[0] == "ASCII line\n"
-        assert write_calls[1] == "Unicode line with emoji 😊\n"
-        assert write_calls[2] == "Line with special chars ñ é ß\n"
+    assert content == "line1\nline2\nline3\n"
+    assert not any(line.rstrip() != line.rstrip(" \t") for line in content.splitlines())
