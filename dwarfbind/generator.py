@@ -46,6 +46,7 @@ def generate_python_module(
     exported_functions: list[str],
     function_signatures: dict[str, dict],
     macros: dict[str, str] | None = None,
+    referenced_modules: list[str] | None = None,
 ) -> None:
     """
     Generate a Python module with ctypes bindings.
@@ -131,7 +132,34 @@ def generate_python_module(
 
         # Write imports
         output_file.write("from ctypes import *\n")
-        output_file.write("import sys\n\n")
+        output_file.write("import sys\n")
+        # Import referenced modules if provided to support cross-module type references
+        if referenced_modules:
+            for module_name in referenced_modules:
+                output_file.write(f"import {module_name} as _dependency_module_{module_name}\n")
+        output_file.write("\n")
+
+        # Helper to resolve struct/class names across this module and dependencies
+        output_file.write("def _resolve_struct(struct_class_name: str):\n")
+        output_file.write("    # Try local types first (may include size suffixes)\n")
+        output_file.write("    if hasattr(types, struct_class_name):\n")
+        output_file.write("        return getattr(types, struct_class_name)\n")
+        output_file.write("    # If local name has a size suffix, try base name without suffix\n")
+        output_file.write("    if struct_class_name.endswith(tuple(str(n) for n in range(10))) and '__' in struct_class_name:\n")
+        output_file.write("        base_part = struct_class_name.split('__')[0]\n")
+        output_file.write("        if hasattr(types, base_part):\n")
+        output_file.write("            return getattr(types, base_part)\n")
+        if referenced_modules:
+            for module_name in referenced_modules:
+                output_file.write(f"    # Check dependency module: {module_name}\n")
+                output_file.write(f"    _dependency_module = _dependency_module_{module_name}\n")
+                output_file.write("    if hasattr(_dependency_module, 'types') and hasattr(_dependency_module.types, struct_class_name):\n")
+                output_file.write("        return getattr(_dependency_module.types, struct_class_name)\n")
+                output_file.write("    if struct_class_name.endswith(tuple(str(n) for n in range(10))) and '__' in struct_class_name:\n")
+                output_file.write("        base_part = struct_class_name.split('__')[0]\n")
+                output_file.write("        if hasattr(_dependency_module, 'types') and hasattr(_dependency_module.types, base_part):\n")
+                output_file.write("            return getattr(_dependency_module.types, base_part)\n")
+        output_file.write("    raise NameError(f'Unknown struct type: {struct_class_name}')\n\n")
 
         # Load library
         output_file.write(
@@ -608,6 +636,9 @@ def generate_python_module(
         )
         if macros:
             output_file.write(", _constants_module")
+        if referenced_modules:
+            for module_name in referenced_modules:
+                output_file.write(f", _dependency_module_{module_name}")
         output_file.write(", _attr_name\n\n")
 
         # Public API

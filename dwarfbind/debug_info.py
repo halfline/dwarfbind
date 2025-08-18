@@ -1620,6 +1620,7 @@ def _dwarf_type_to_signature_expr(
     debug_files: DebugInfoFiles,
     auxiliary_index: dict[int, object],
     struct_name_mapping: dict[tuple[str, int], str],
+    dependent_module_names: list[str] | None = None,
 ) -> str | None:
     """
     Convert a DWARF type (for function return/parameter) into a Python expression
@@ -1656,6 +1657,9 @@ def _dwarf_type_to_signature_expr(
                 py_name = struct_name_mapping.get((struct_name, struct_size))
                 if py_name:
                     return f"POINTER(types.{py_name})"
+                # Fall back to dynamic resolver for cross-module types
+                base = create_safe_python_identifier(struct_name)
+                return f"POINTER(_resolve_struct('{base}'))"
             return "c_void_p"
 
         # Pointer to void or unknown → c_void_p
@@ -1669,6 +1673,8 @@ def _dwarf_type_to_signature_expr(
             py_name = struct_name_mapping.get((struct_name, struct_size))
             if py_name:
                 return f"types.{py_name}"
+            base = create_safe_python_identifier(struct_name)
+            return f"_resolve_struct('{base}')"
 
     # Fallback to general conversion
     info = convert_dwarf_type_to_ctypes(type_entry, debug_files, auxiliary_index)
@@ -1680,11 +1686,11 @@ def _dwarf_type_to_signature_expr(
         for (c_name, size), py_name in struct_name_mapping.items():
             if create_safe_python_identifier(c_name) == base and str(int(size)) == size_str:
                 return f"types.{py_name}"
-        return f"types.{base}"
+        return f"_resolve_struct('{base}')"
     if expr.startswith("STRUCT::"):
         # STRUCT::Name:Size
         base = expr.split("::")[1].split(":")[0]
-        return f"types.{base}"
+        return f"_resolve_struct('{base}')"
     return expr
 
 
@@ -1692,6 +1698,7 @@ def collect_exported_function_signatures(
     debug_files: DebugInfoFiles,
     structures: dict[tuple[str, int], StructureDefinition],
     exported_function_names: list[str],
+    dependent_module_names: list[str] | None = None,
 ) -> dict[str, dict]:
     """
     Collect ctypes signatures for exported functions using DWARF information.
@@ -1736,7 +1743,7 @@ def collect_exported_function_signatures(
                 return_attr = entry.attributes.get("DW_AT_type")
                 if return_attr is not None:
                     return_type_entry = find_referenced_debug_entry(entry, "DW_AT_type", debug_files, auxiliary_index)
-                    restype_expr = _dwarf_type_to_signature_expr(return_type_entry, debug_files, auxiliary_index, struct_name_mapping)
+                    restype_expr = _dwarf_type_to_signature_expr(return_type_entry, debug_files, auxiliary_index, struct_name_mapping, dependent_module_names)
                     # Treat 'void' return as None
                     if (
                         return_type_entry is not None
@@ -1753,7 +1760,7 @@ def collect_exported_function_signatures(
                     if child.tag != "DW_TAG_formal_parameter":
                         continue
                     param_type_entry = find_referenced_debug_entry(child, "DW_AT_type", debug_files, auxiliary_index)
-                    expr = _dwarf_type_to_signature_expr(param_type_entry, debug_files, auxiliary_index, struct_name_mapping)
+                    expr = _dwarf_type_to_signature_expr(param_type_entry, debug_files, auxiliary_index, struct_name_mapping, dependent_module_names)
                     # For safety, default unresolved to c_void_p
                     arg_exprs.append(expr or "c_void_p")
 

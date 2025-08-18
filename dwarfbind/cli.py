@@ -287,7 +287,10 @@ def run_generation_pipeline(args: argparse.Namespace) -> None:
         )
         # Collect function signatures for exported functions
         function_signatures = collect_exported_function_signatures(
-            debug_files, all_structures, exported_functions
+            debug_files,
+            all_structures,
+            exported_functions,
+            args.modules or [],
         )
 
         # Filter/augment typedefs
@@ -368,6 +371,7 @@ def run_generation_pipeline(args: argparse.Namespace) -> None:
                 exported_functions,
                 function_signatures,
                 macros_from_headers,
+                referenced_modules=(args.modules or []),
             )
             strip_trailing_whitespace_from_file(output_filename)
             print_success(f"Generated: {output_filename}")
