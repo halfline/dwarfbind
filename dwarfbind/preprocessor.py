@@ -63,9 +63,13 @@ def process_headers(
 
     macros = {}
 
+    def _strip_int_suffixes(value: str) -> str:
+        # Remove common C integer literal suffixes (u/U, l/L in any combination)
+        return re.sub(r"(?i)(?:[uUlL])+$", "", value)
+
     def _parse_cpp_output(text: str) -> None:
         for line in text.splitlines():
-            if not line.startswith("#define"):
+            if not line.strip().startswith("#define"):
                 continue
             parts = line.split(None, 2)
             if len(parts) < 2:
@@ -81,6 +85,7 @@ def process_headers(
             # Convert value to Python
             if value:
                 try:
+                    value = value.strip()
                     # Strip outer parentheses if present
                     while value.startswith("(") and value.endswith(")"):
                         value = value[1:-1].strip()
@@ -96,92 +101,87 @@ def process_headers(
                             while value.startswith("(") and value.endswith(")"):
                                 value = value[1:-1].strip()
                             break
-                    # Handle scientific notation floats
-                    sci_match = re.match(r"^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+(?:[fFlL])?$", value)
-                    if sci_match:
-                        # Strip float suffixes if present
-                        suffix = value[-1]
-                        if suffix in ("f", "F", "l", "L"):
-                            value_num = value[:-1]
-                        else:
-                            value_num = value
-                        try:
-                            value = str(float(value_num))
-                        except ValueError:
-                            logger.debug(f"Invalid scientific float for {name}: {value}")
-                            return
-                    # Handle hex/octal numbers
-                    elif value.startswith("0x") or value.startswith("0X"):
-                        try:
-                            if value.endswith(("l", "L")):
-                                value = value[:-1]
-                            value = str(int(value, 16))
-                        except ValueError:
-                            logger.debug(
-                                f"Invalid hex value for {name}: {value}"
-                            )
-                            return
-                    elif value.startswith("0") and value not in ("0",):
-                        try:
-                            if value.endswith(("l", "L")):
-                                value = value[:-1]
-                            value = str(int(value, 8))
-                        except ValueError:
-                            logger.debug(
-                                f"Invalid octal value for {name}: {value}"
-                            )
-                            return
-                    # Handle decimal numbers (ints and simple floats)
-                    elif value.replace(".", "", 1).replace("l", "", 1).replace(
-                        "L", "", 1
-                    ).isdigit() or (
-                        value.startswith("-") and value[1:].isdigit()
-                    ):
-                        try:
-                            if value.endswith(("l", "L")):
-                                value = value[:-1]
-                            if "." in value:
-                                value = str(float(value))
+
+                    # First, try generic integer parse with base auto-detection
+                    try:
+                        numeric = int(_strip_int_suffixes(value), 0)
+                        value = str(numeric)
+                    except Exception:
+                        # Handle scientific notation floats
+                        sci_match = re.match(r"^[+-]?\d+(?:\.\d+)?[eE][+-]?\d+(?:[fFlL])?$", value)
+                        if sci_match:
+                            # Strip float suffixes if present
+                            suffix = value[-1]
+                            if suffix in ("f", "F", "l", "L"):
+                                value_num = value[:-1]
                             else:
-                                value = str(int(value))
-                        except ValueError:
-                            logger.debug(
-                                f"Invalid decimal value for {name}: {value}"
-                            )
-                            return
-                    # String literals
-                    elif (value.startswith('"') and value.endswith('"')) or (
-                        value.startswith("'") and value.endswith("'")
-                    ):
-                        try:
-                            if value[0] == '"':
-                                value = (
-                                    value[1:-1]
-                                    .encode("utf-8")
-                                    .decode("unicode_escape")
+                                value_num = value
+                            try:
+                                value = str(float(value_num))
+                            except ValueError:
+                                logger.debug(f"Invalid scientific float for {name}: {value}")
+                                return
+                        # Handle hex/octal numbers explicitly as fallback
+                        elif value.startswith("0x") or value.startswith("0X"):
+                            try:
+                                value = _strip_int_suffixes(value)
+                                value = str(int(value, 16))
+                            except ValueError:
+                                logger.debug(
+                                    f"Invalid hex value for {name}: {value}"
                                 )
-                            else:
-                                value = value[1:-1]
-                            value = repr(value)
-                        except (UnicodeError, ValueError):
-                            logger.debug(
-                                f"Invalid string value for {name}: {value}"
+                                return
+                        elif value.startswith("0") and value not in ("0",):
+                            try:
+                                value = _strip_int_suffixes(value)
+                                value = str(int(value, 8))
+                            except ValueError:
+                                logger.debug(
+                                    f"Invalid octal value for {name}: {value}"
+                                )
+                                return
+                        # Handle decimal numbers (ints and simple floats)
+                        elif value.replace(".", "", 1).replace(
+                            "l", "", 1
+                        ).replace(
+                            "L", "", 1
+                        ).isdigit() or (
+                            value.startswith("-") and value[1:].isdigit()
+                        ):
+                            try:
+                                value = _strip_int_suffixes(value)
+                                if "." in value:
+                                    value = str(float(value))
+                                else:
+                                    value = str(int(value))
+                            except ValueError:
+                                logger.debug(
+                                    f"Invalid decimal value for {name}: {value}"
+                                )
+                                return
+                        # String literals
+                        elif (
+                            (value.strip().startswith('"') and value.strip().endswith('"'))
+                            or (value.strip().startswith("'") and value.strip().endswith("'"))
+                        ):
+                            # Preserve raw contents (strip outer quotes) without decoding escapes
+                            v = value.strip()
+                            inner = v[1:-1]
+                            value = repr(inner)
+                        else:
+                            # Any other value that still contains identifiers should be skipped
+                            ident_tokens = re.findall(
+                                r"[A-Za-z_][A-Za-z0-9_]*", value
                             )
-                            return
-                    else:
-                        # Any other value that still contains identifiers should be skipped
-                        ident_tokens = re.findall(
-                            r"[A-Za-z_][A-Za-z0-9_]*", value
-                        )
-                        if ident_tokens:
+                            if ident_tokens:
+                                logger.debug(
+                                    f"Skipping macro with unresolved identifiers {name} = {value}"
+                                )
+                                continue
                             logger.debug(
-                                f"Skipping macro with unresolved identifiers {name} = {value}"
+                                f"Skipping non-literal macro {name} = {value}"
                             )
-                            return
-                        logger.debug(
-                            f"Skipping non-literal macro {name} = {value}"
-                        )
-                        return
+                            continue
                     # Final validation - ensure it's a valid Python literal
                     try:
                         compile(value, "<string>", "eval")
@@ -189,10 +189,10 @@ def process_headers(
                         logger.debug(
                             f"Invalid Python literal for {name}: {value}"
                         )
-                        return
+                        continue
                 except (ValueError, SyntaxError) as e:
                     logger.debug(f"Error processing {name}: {value} - {str(e)}")
-                    return
+                    continue
             else:
                 value = "1"
             logger.debug(f"Adding constant {name} = {value}")
@@ -215,6 +215,28 @@ def process_headers(
                 )
                 continue
             _parse_cpp_output(result.stdout)
+
+            # Generic fallback: capture simple numeric macros not added above
+            try:
+                for m in re.finditer(r"^#define\s+([A-Za-z_][A-Za-z0-9_]*)\s+([^\n]+)$", result.stdout, flags=re.MULTILINE):
+                    name, raw = m.group(1), m.group(2).strip()
+                    # Skip built-ins and function-like macros (pattern excludes '(' in name)
+                    if name.startswith("__"):
+                        continue
+                    if name in macros or name in existing_constants:
+                        continue
+                    # strip outer parens
+                    while raw.startswith("(") and raw.endswith(")"):
+                        raw = raw[1:-1].strip()
+                    # Accept only pure numeric literals (hex/oct/dec) with optional suffixes
+                    try:
+                        parsed = int(_strip_int_suffixes(raw), 0)
+                    except Exception:
+                        continue
+                    macros[name] = str(parsed)
+                    logger.debug(f"Adding constant {name} = {parsed} (numeric)")
+            except Exception:
+                pass
         except Exception as e:
             logger.warning(f"Error processing {header}: {e}")
 
