@@ -451,11 +451,51 @@ def generate_python_module(
         output_file.write("    # Typedef aliases from C typedefs\n\n")
         for typedef_name, typedef_info in typedefs.items():
             python_name = create_safe_python_identifier(typedef_name)
+            # Handle struct references in typedefs
+            representation = typedef_info.representation
+
+            # Check if it's an array type
+            array_match = re.match(r'\((.*?)\s*\*\s*(\d+)\)', representation)
+            if array_match:
+                element_type = array_match.group(1).strip()
+                count = int(array_match.group(2))
+
+                # Handle struct reference in array element type
+                element_size = None
+                if element_type.startswith("@STRUCTREF:"):
+                    struct_name = element_type.split(":")[1]
+                    struct_size = int(element_type.split(":")[2])
+                    element_type = struct_name
+                    element_size = struct_size
+                elif element_type.startswith("STRUCT::"):
+                    struct_name = element_type.split("::")[1].split(":")[0]
+                    struct_size = int(element_type.split(":")[-1])
+                    element_type = struct_name
+                    element_size = struct_size
+
+                representation = f"({element_type} * {count})"
+                byte_size = element_size * count if element_size else None
+            else:
+                # Handle non-array struct references
+                byte_size = None
+                if representation.startswith("@STRUCTREF:"):
+                    struct_name = representation.split(":")[1]
+                    struct_size = int(representation.split(":")[2])
+                    representation = struct_name
+                    byte_size = struct_size
+                elif representation.startswith("STRUCT::"):
+                    struct_name = representation.split("::")[1].split(":")[0]
+                    struct_size = int(representation.split(":")[-1])
+                    representation = struct_name
+                    byte_size = struct_size
+
             output_file.write(
-                f"    class {python_name}({typedef_info.representation}):\n"
+                f"    class {python_name}({representation}):\n"
             )
             if typedef_info.description:
                 output_file.write(f'        """{typedef_info.description}"""\n')
+            if byte_size is not None:
+                output_file.write(f"        BYTE_SIZE = {byte_size}\n")
             output_file.write("        pass\n\n")
 
         # Write exported symbols
