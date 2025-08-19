@@ -135,8 +135,8 @@ def generate_python_module(
         output_file.write("import sys\n")
         # Import referenced modules if provided to support cross-module type references
         if referenced_modules:
-            for module_name in referenced_modules:
-                output_file.write(f"import {module_name} as _dependency_module_{module_name}\n")
+            for referenced_module in referenced_modules:
+                output_file.write(f"import {referenced_module} as _dependency_module_{referenced_module}\n")
         output_file.write("\n")
 
         # Helper to resolve struct/class names across this module and dependencies
@@ -149,8 +149,8 @@ def generate_python_module(
         output_file.write("        if hasattr(types, base_part):\n")
         output_file.write("            return getattr(types, base_part)\n")
         if referenced_modules:
-            for module_name in referenced_modules:
-                output_file.write(f"    _dependency_module = _dependency_module_{module_name}\n")
+            for referenced_module in referenced_modules:
+                output_file.write(f"    _dependency_module = _dependency_module_{referenced_module}\n")
                 output_file.write("    if hasattr(_dependency_module, 'types') and hasattr(_dependency_module.types, struct_class_name):\n")
                 output_file.write("        return getattr(_dependency_module.types, struct_class_name)\n")
                 output_file.write("    if struct_class_name.endswith(tuple(str(n) for n in range(10))) and '__' in struct_class_name:\n")
