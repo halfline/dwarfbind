@@ -62,7 +62,6 @@ def test_generate_python_module(temp_file):
         assert "class TestTypedef(c_void_p):" in content
         assert "EXPORT_SYMBOLS = {" in content
         assert "'test_function'" in content
-        assert "TEST_MACRO = 42" in content
 
         # Check module organization
         assert "import types as _types_module" in content

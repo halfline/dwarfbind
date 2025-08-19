@@ -141,17 +141,15 @@ def generate_python_module(
 
         # Helper to resolve struct/class names across this module and dependencies
         output_file.write("def _resolve_struct(struct_class_name: str):\n")
-        output_file.write("    # Try local types first (may include size suffixes)\n")
+        output_file.write('    """Resolve a struct class name in local types or dependency modules."""\n')
         output_file.write("    if hasattr(types, struct_class_name):\n")
         output_file.write("        return getattr(types, struct_class_name)\n")
-        output_file.write("    # If local name has a size suffix, try base name without suffix\n")
         output_file.write("    if struct_class_name.endswith(tuple(str(n) for n in range(10))) and '__' in struct_class_name:\n")
         output_file.write("        base_part = struct_class_name.split('__')[0]\n")
         output_file.write("        if hasattr(types, base_part):\n")
         output_file.write("            return getattr(types, base_part)\n")
         if referenced_modules:
             for module_name in referenced_modules:
-                output_file.write(f"    # Check dependency module: {module_name}\n")
                 output_file.write(f"    _dependency_module = _dependency_module_{module_name}\n")
                 output_file.write("    if hasattr(_dependency_module, 'types') and hasattr(_dependency_module.types, struct_class_name):\n")
                 output_file.write("        return getattr(_dependency_module.types, struct_class_name)\n")
@@ -441,7 +439,7 @@ def generate_python_module(
                             description = (description + " [self-by-value → c_void_p]") if description else "self-by-value → c_void_p"
                             ctypes_expression = "c_void_p"
                             field_size = 8
-                            logger.debug(f"  Converted self-reference to c_void_p")
+                            logger.debug("  Converted self-reference to c_void_p")
                         elif ctypes_expression.startswith("(") and ctypes_expression.endswith(")") and " * " in ctypes_expression:
                             # Handle arrays of self
                             inner_content = ctypes_expression[1:-1].strip()
@@ -452,7 +450,7 @@ def generate_python_module(
                                 description = (description + f" [array of self → c_void_p * {count_str}]") if description else f"array of self → c_void_p * {count_str}"
                                 ctypes_expression = f"(c_void_p * {count_str})"
                                 field_size = 8 * int(count_str)
-                                logger.debug(f"  Converted array of self to c_void_p array")
+                                logger.debug("  Converted array of self to c_void_p array")
 
                         field_lines.append(f'        ("{member_name}", {ctypes_expression}),  # {description}, offset {offset}')
 
@@ -549,13 +547,6 @@ def generate_python_module(
                 )
         output_file.write("}\n\n")
 
-        # Write constants if available
-        if macros:
-            output_file.write("# Constants\n")
-            for name, value in macros.items():
-                output_file.write(f"{name} = {value}\n")
-            output_file.write("\n")
-
         # Enable submodule-style imports
         output_file.write(
             f"# Enable 'from {module_name}.types import StructName' and 'from {module_name}.symbols import function_name'\n"
@@ -603,17 +594,17 @@ def generate_python_module(
             "        setattr(_types_submodule, _attr_name, getattr(types, _attr_name))\n\n"
         )
 
-        # Create constants submodule if needed
+        # Create 'constants' submodule always
+        output_file.write("# Create 'constants' submodule\n")
+        output_file.write(
+            f"_constants_module = _types_module.ModuleType('{module_name}.constants')\n"
+        )
         if macros:
-            output_file.write("# Create 'constants' submodule\n")
-            output_file.write(
-                f"_constants_module = _types_module.ModuleType('{module_name}.constants')\n"
-            )
             for name, value in macros.items():
                 output_file.write(
                     f"setattr(_constants_module, {repr(name)}, {value})\n"
                 )
-            output_file.write("\n")
+        output_file.write("\n")
 
         # Register submodules
         output_file.write("# Register submodules\n")
@@ -623,30 +614,14 @@ def generate_python_module(
         output_file.write(
             f"_sys.modules['{module_name}.symbols'] = _symbols_module\n"
         )
-        if macros:
-            output_file.write(
-                f"_sys.modules['{module_name}.constants'] = _constants_module\n"
-            )
-        output_file.write("\n")
-
-        # Clean up temporary names
-        output_file.write("# Clean up temporary names\n")
         output_file.write(
-            "del _types_module, _sys, _symbols_module, _symbols___getattr__, _symbols___dir__, _types_submodule"
+            f"_sys.modules['{module_name}.constants'] = _constants_module\n"
         )
-        if macros:
-            output_file.write(", _constants_module")
-        if referenced_modules:
-            for module_name in referenced_modules:
-                output_file.write(f", _dependency_module_{module_name}")
-        output_file.write(", _attr_name\n\n")
+        output_file.write("\n")
 
         # Public API
         output_file.write("# Public API\n")
-        if macros:
-            output_file.write("__all__ = ['symbols', 'types', 'constants']\n")
-        else:
-            output_file.write("__all__ = ['symbols', 'types']\n")
+        output_file.write("__all__ = ['symbols', 'types', 'constants']\n")
 
 
 def generate_constants_section(macros: dict[str, str], module_name: str) -> str:
@@ -1208,6 +1183,7 @@ def print_usage_example(
     all_typedefs: dict[str, TypedefInfo],
     output_filename: str,
     use_color: bool = True,
+    macros: dict[str, str] | None = None,
 ) -> None:
     """
     Print a formatted usage example with real discovered function and struct names.
@@ -1223,6 +1199,20 @@ def print_usage_example(
     example = find_usage_example(debug_files, all_structures)
 
     module_name = os.path.splitext(output_filename)[0]
+    # Pick a simple constant to display, if available
+    example_constant = None
+    if macros:
+        # Filter valid identifiers and sort by complexity
+        valid_constants = [
+            name for name in macros.keys()
+            if name.isidentifier() and not name.startswith("__")
+        ]
+        if valid_constants:
+            # Sort by length and underscores to prefer simpler names
+            example_constant = sorted(
+                valid_constants,
+                key=lambda x: (len(x), x.count("_")),
+            )[0]
 
     if use_color and _has_colorama:
         print(f"\n{Fore.BLUE}┌─ Summary{'─' * 56}{Style.RESET_ALL}")
@@ -1239,11 +1229,11 @@ def print_usage_example(
             "from ctypes import *",
             f"from {module_name}.types import {example['struct']}",
             f"from {module_name}.symbols import {example['function']}",
-            f"from {module_name}.constants import BUFFER_SIZE",
+            *( [f"from {module_name}.constants import {example_constant}"] if example_constant else [] ),
             "",
             "# Create and populate struct:",
             f"structure = {example['struct']}()",
-            f"structure.{example['field']} = BUFFER_SIZE",
+            ( f"structure.{example['field']} = {example_constant}" if example_constant else f"# structure.{example['field']} = 0  # set fields as needed" ),
             "",
             "# Set up function prototype and call:",
             f"{example['function']}.argtypes = {example['argtypes']}",
@@ -1265,11 +1255,15 @@ def print_usage_example(
         print("from ctypes import *")
         print(f"from {module_name}.types import {example['struct']}")
         print(f"from {module_name}.symbols import {example['function']}")
-        print(f"from {module_name}.constants import BUFFER_SIZE")
+        if example_constant:
+            print(f"from {module_name}.constants import {example_constant}")
         print("")
         print("# Create and populate struct:")
         print(f"structure = {example['struct']}()")
-        print(f"structure.{example['field']} = BUFFER_SIZE")
+        if example_constant:
+            print(f"structure.{example['field']} = {example_constant}")
+        else:
+            print(f"# structure.{example['field']} = 0  # set fields as needed")
         print("")
         print("# Set up function prototype and call:")
         print(f"{example['function']}.argtypes = {example['argtypes']}")

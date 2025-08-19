@@ -76,7 +76,7 @@ def process_headers(
                 continue
             name = parts[1]
             value = parts[2] if len(parts) > 2 else None
-            # Skip if this constant already exists in a referenced module
+            # Skip constants that are present in referenced modules
             if name in existing_constants:
                 continue
             # Skip function-like macros and built-ins

@@ -386,6 +386,7 @@ def run_generation_pipeline(args: argparse.Namespace) -> None:
             all_typedefs,
             output_filename,
             use_color=use_color,
+            macros=macros_from_headers,
         )
 
 
