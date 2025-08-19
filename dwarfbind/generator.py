@@ -1231,13 +1231,10 @@ def print_usage_example(
             f"from {module_name}.symbols import {example['function']}",
             *( [f"from {module_name}.constants import {example_constant}"] if example_constant else [] ),
             "",
-            "# Create and populate struct:",
+            "# Create and use a structure",
             f"structure = {example['struct']}()",
             ( f"structure.{example['field']} = {example_constant}" if example_constant else f"# structure.{example['field']} = 0  # set fields as needed" ),
             "",
-            "# Set up function prototype and call:",
-            f"{example['function']}.argtypes = {example['argtypes']}",
-            f"{example['function']}.restype = c_int",
             f"result = {example['function']}({example['call_args']})",
             "```",
         ]
@@ -1258,15 +1255,12 @@ def print_usage_example(
         if example_constant:
             print(f"from {module_name}.constants import {example_constant}")
         print("")
-        print("# Create and populate struct:")
+        print("# Create and use a structure")
         print(f"structure = {example['struct']}()")
         if example_constant:
             print(f"structure.{example['field']} = {example_constant}")
         else:
             print(f"# structure.{example['field']} = 0  # set fields as needed")
         print("")
-        print("# Set up function prototype and call:")
-        print(f"{example['function']}.argtypes = {example['argtypes']}")
-        print(f"{example['function']}.restype = c_int")
         print(f"result = {example['function']}({example['call_args']})")
         print("```")
