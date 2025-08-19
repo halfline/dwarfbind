@@ -8,6 +8,7 @@ import os
 import sys
 
 # Local imports
+from . import __version__
 from .debug_info import (
     QualityScore,
     TypedefInfo,
@@ -122,7 +123,7 @@ If no explicit library paths are provided, will attempt to find the library file
 Use with --headers to specify which header files to process.""",
     )
 
-    parser.add_argument("--version", action="version", version="%(prog)s 1.0.0")
+    parser.add_argument("--version", action="version", version=f"%(prog)s {__version__}")
 
     args = parser.parse_args()
 
