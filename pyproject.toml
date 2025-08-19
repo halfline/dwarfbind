@@ -1,6 +1,6 @@
 [project]
 name = "dwarfbind"
-version = "0.1.2"
+version = "0.1.3"
 description = "Generate Python ctypes bindings from shared libraries"
 authors = [
     {name = "Ray Strode", email = "rstrode@redhat.com"}
